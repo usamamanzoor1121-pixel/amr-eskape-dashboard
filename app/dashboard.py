@@ -7,7 +7,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import os
 
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -29,14 +28,13 @@ def load_data():
     trend_df         = pd.read_csv(f"{DATA_DIR}/resistance_trends.csv")
     country_df       = pd.read_csv(f"{DATA_DIR}/country_resistance.csv")
     summary          = pd.read_csv(f"{DATA_DIR}/pathogen_summary.csv")
-    ast_long         = pd.read_csv(f"{DATA_DIR}/ast_long.csv")
-    return resistance_rates, trend_df, country_df, summary, ast_long
+    clean_df         = pd.read_csv(f"{DATA_DIR}/eskape_clean.csv")
+    return resistance_rates, trend_df, country_df, summary, clean_df
 
-resistance_rates, trend_df, country_df, summary, ast_long = load_data()
+resistance_rates, trend_df, country_df, summary, clean_df = load_data()
 
-PATHOGENS = sorted(resistance_rates["pathogen"].unique().tolist())
-
-# ── Colour palette ─────────────────────────────────────────────────────────────
+# All 6 pathogens from summary — not from resistance_rates
+ALL_PATHOGENS = sorted(summary["pathogen"].unique().tolist())
 
 PATHOGEN_COLORS = {
     "Staphylococcus aureus"   : "#e63946",
@@ -52,7 +50,10 @@ PATHOGEN_COLORS = {
 st.title("🦠 ESKAPE Pathogen AMR Surveillance Dashboard")
 st.markdown(
     "Antimicrobial resistance trends across **ESKAPE pathogens** "
-    "using NCBI Pathogen Detection data (504,096 isolates · 6 pathogens · 110 antibiotics)"
+    "using NCBI Pathogen Detection data · "
+    f"**{summary['total_isolates'].sum():,} isolates · "
+    f"{len(ALL_PATHOGENS)} pathogens · "
+    f"{resistance_rates['antibiotic'].nunique()} antibiotics**"
 )
 st.divider()
 
@@ -62,16 +63,16 @@ st.sidebar.header("Filters")
 
 selected_pathogens = st.sidebar.multiselect(
     "Select Pathogens",
-    options=PATHOGENS,
-    default=PATHOGENS,
+    options=ALL_PATHOGENS,
+    default=ALL_PATHOGENS,  # all 6 selected by default
 )
 
 min_tested = st.sidebar.slider(
     "Minimum isolates tested (per antibiotic)",
-    min_value=50,
+    min_value=20,
     max_value=500,
     value=100,
-    step=50,
+    step=20,
 )
 
 st.sidebar.divider()
@@ -82,7 +83,7 @@ st.sidebar.divider()
 st.sidebar.markdown("Built by **Usama Manzoor**")
 st.sidebar.markdown("[GitHub](https://github.com/usamamanzoor1121-pixel)")
 
-# ── Tab layout ─────────────────────────────────────────────────────────────────
+# ── Tabs ───────────────────────────────────────────────────────────────────────
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Overview",
@@ -99,16 +100,14 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     st.subheader("Dataset Overview")
 
-    # KPI cards
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Total Isolates",   f"{summary['total_isolates'].sum():,}")
-    col2.metric("Pathogens",        f"{len(summary)}")
+    col1.metric("Total Isolates",     f"{summary['total_isolates'].sum():,}")
+    col2.metric("Pathogens",          f"{len(ALL_PATHOGENS)}")
     col3.metric("Antibiotics Tested", f"{resistance_rates['antibiotic'].nunique()}")
-    col4.metric("Countries",        f"{country_df['country'].nunique()}")
+    col4.metric("Countries",          f"{country_df['country'].nunique()}")
 
     st.divider()
 
-    # Isolates per pathogen bar chart
     fig_iso = px.bar(
         summary.sort_values("total_isolates", ascending=True),
         x="total_isolates",
@@ -125,9 +124,8 @@ with tab1:
     st.plotly_chart(fig_iso, use_container_width=True)
 
     st.divider()
-
-    # Summary table
     st.subheader("Pathogen Summary Statistics")
+
     display_summary = summary.copy()
     display_summary.columns = [
         "Pathogen", "Total Isolates", "Isolates with AST",
@@ -149,9 +147,8 @@ with tab2:
     ].copy()
 
     if filtered_rates.empty:
-        st.warning("No data for current filters.")
+        st.warning("No data for current filters. Try lowering the minimum isolates slider.")
     else:
-        # Top resistant combinations
         top_resistant = filtered_rates.sort_values(
             "resistance_rate", ascending=False
         ).head(20)
@@ -163,7 +160,7 @@ with tab2:
             color="pathogen",
             orientation="h",
             color_discrete_map=PATHOGEN_COLORS,
-            title="Top 20 Pathogen-Antibiotic Resistance Rates",
+            title="Top 20 Pathogen–Antibiotic Resistance Rates",
             labels={
                 "resistance_rate": "Resistance Rate (%)",
                 "antibiotic": "Antibiotic",
@@ -175,8 +172,6 @@ with tab2:
         st.plotly_chart(fig_top, use_container_width=True)
 
         st.divider()
-
-        # Heatmap — pathogen vs antibiotic
         st.subheader("Resistance Heatmap")
 
         pivot = filtered_rates.pivot_table(
@@ -186,17 +181,22 @@ with tab2:
             aggfunc="mean",
         ).fillna(0)
 
-        fig_heat = px.imshow(
-            pivot,
-            color_continuous_scale="RdYlGn_r",
-            title="Resistance Rate Heatmap (%) — Antibiotic × Pathogen",
-            labels={"color": "Resistance Rate (%)"},
-            aspect="auto",
-            zmin=0,
-            zmax=100,
-        )
-        fig_heat.update_layout(height=700)
-        st.plotly_chart(fig_heat, use_container_width=True)
+        if pivot.empty:
+            st.warning("Not enough data to render heatmap.")
+        else:
+            fig_heat = px.imshow(
+                pivot,
+                color_continuous_scale="RdYlGn_r",
+                title="Resistance Rate (%) — Antibiotic × Pathogen",
+                labels={"color": "Resistance Rate (%)"},
+                aspect="auto",
+                zmin=0,
+                zmax=100,
+                text_auto=".0f",
+            )
+            fig_heat.update_layout(height=700)
+            fig_heat.update_xaxes(tickangle=-30)
+            st.plotly_chart(fig_heat, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — TRENDS OVER TIME
@@ -205,56 +205,61 @@ with tab2:
 with tab3:
     st.subheader("Resistance Trends Over Time")
 
-    col_left, col_right = st.columns(2)
+    pathogens_with_trend = trend_df["pathogen"].unique().tolist()
+    trend_pathogen_options = [p for p in selected_pathogens if p in pathogens_with_trend]
 
-    with col_left:
-        selected_pathogen_trend = st.selectbox(
-            "Select Pathogen",
-            options=selected_pathogens,
-            key="trend_pathogen",
-        )
-
-    # Get top antibiotics for this pathogen by number of records
-    top_abx = (
-        trend_df[trend_df["pathogen"] == selected_pathogen_trend]
-        .groupby("antibiotic")["total_tested"]
-        .sum()
-        .sort_values(ascending=False)
-        .head(10)
-        .index.tolist()
-    )
-
-    with col_right:
-        selected_abx_trend = st.multiselect(
-            "Select Antibiotics",
-            options=top_abx,
-            default=top_abx[:5],
-            key="trend_abx",
-        )
-
-    trend_filtered = trend_df[
-        (trend_df["pathogen"] == selected_pathogen_trend) &
-        (trend_df["antibiotic"].isin(selected_abx_trend))
-    ]
-
-    if trend_filtered.empty:
-        st.warning("No trend data for this selection.")
+    if not trend_pathogen_options:
+        st.warning("No trend data for selected pathogens.")
     else:
-        fig_trend = px.line(
-            trend_filtered,
-            x="year",
-            y="resistance_rate",
-            color="antibiotic",
-            markers=True,
-            title=f"Resistance Trends — {selected_pathogen_trend}",
-            labels={
-                "resistance_rate": "Resistance Rate (%)",
-                "year": "Year",
-                "antibiotic": "Antibiotic",
-            },
+        col_l, col_r = st.columns(2)
+
+        with col_l:
+            selected_pathogen_trend = st.selectbox(
+                "Select Pathogen",
+                options=trend_pathogen_options,
+                key="trend_pathogen",
+            )
+
+        top_abx = (
+            trend_df[trend_df["pathogen"] == selected_pathogen_trend]
+            .groupby("antibiotic")["total_tested"]
+            .sum()
+            .sort_values(ascending=False)
+            .head(10)
+            .index.tolist()
         )
-        fig_trend.update_layout(height=450)
-        st.plotly_chart(fig_trend, use_container_width=True)
+
+        with col_r:
+            selected_abx_trend = st.multiselect(
+                "Select Antibiotics",
+                options=top_abx,
+                default=top_abx[:5],
+                key="trend_abx",
+            )
+
+        trend_filtered = trend_df[
+            (trend_df["pathogen"] == selected_pathogen_trend) &
+            (trend_df["antibiotic"].isin(selected_abx_trend))
+        ]
+
+        if trend_filtered.empty:
+            st.warning("No data for this selection.")
+        else:
+            fig_trend = px.line(
+                trend_filtered,
+                x="year",
+                y="resistance_rate",
+                color="antibiotic",
+                markers=True,
+                title=f"Resistance Trends — {selected_pathogen_trend}",
+                labels={
+                    "resistance_rate": "Resistance Rate (%)",
+                    "year": "Year",
+                    "antibiotic": "Antibiotic",
+                },
+            )
+            fig_trend.update_layout(height=450)
+            st.plotly_chart(fig_trend, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4 — GEOGRAPHIC DISTRIBUTION
@@ -263,56 +268,64 @@ with tab3:
 with tab4:
     st.subheader("Geographic Distribution of Resistance")
 
-    col_l, col_r = st.columns(2)
-    with col_l:
-        geo_pathogen = st.selectbox(
-            "Select Pathogen",
-            options=selected_pathogens,
-            key="geo_pathogen",
-        )
-    
-    geo_abx_options = (
-        country_df[country_df["pathogen"] == geo_pathogen]["antibiotic"]
-        .value_counts()
-        .head(20)
-        .index.tolist()
-    )
-    with col_r:
-        geo_antibiotic = st.selectbox(
-            "Select Antibiotic",
-            options=geo_abx_options,
-            key="geo_abx",
-        )
+    pathogens_with_geo = country_df["pathogen"].unique().tolist()
+    geo_pathogen_options = [p for p in selected_pathogens if p in pathogens_with_geo]
 
-    geo_filtered = country_df[
-        (country_df["pathogen"] == geo_pathogen) &
-        (country_df["antibiotic"] == geo_antibiotic)
-    ].sort_values("resistance_rate", ascending=False)
-
-    if geo_filtered.empty:
-        st.warning("No geographic data for this selection.")
+    if not geo_pathogen_options:
+        st.warning("No geographic data for selected pathogens.")
     else:
-        fig_geo = px.bar(
-            geo_filtered.head(30),
-            x="country",
-            y="resistance_rate",
-            color="resistance_rate",
-            color_continuous_scale="RdYlGn_r",
-            title=f"{geo_pathogen} — {geo_antibiotic} resistance by country",
-            labels={
-                "resistance_rate": "Resistance Rate (%)",
-                "country": "Country",
-            },
-            hover_data=["total_tested"],
-        )
-        fig_geo.update_layout(height=450, xaxis_tickangle=-45)
-        st.plotly_chart(fig_geo, use_container_width=True)
+        col_l, col_r = st.columns(2)
 
-        st.dataframe(
-            geo_filtered[["country", "total_tested", "total_resistant", "resistance_rate"]],
-            use_container_width=True,
-            hide_index=True,
+        with col_l:
+            geo_pathogen = st.selectbox(
+                "Select Pathogen",
+                options=geo_pathogen_options,
+                key="geo_pathogen",
+            )
+
+        geo_abx_options = (
+            country_df[country_df["pathogen"] == geo_pathogen]["antibiotic"]
+            .value_counts()
+            .head(20)
+            .index.tolist()
         )
+
+        with col_r:
+            geo_antibiotic = st.selectbox(
+                "Select Antibiotic",
+                options=geo_abx_options,
+                key="geo_abx",
+            )
+
+        geo_filtered = country_df[
+            (country_df["pathogen"] == geo_pathogen) &
+            (country_df["antibiotic"] == geo_antibiotic)
+        ].sort_values("resistance_rate", ascending=False)
+
+        if geo_filtered.empty:
+            st.warning("No geographic data for this selection.")
+        else:
+            fig_geo = px.bar(
+                geo_filtered.head(30),
+                x="country",
+                y="resistance_rate",
+                color="resistance_rate",
+                color_continuous_scale="RdYlGn_r",
+                title=f"{geo_pathogen} · {geo_antibiotic} — Resistance by Country",
+                labels={
+                    "resistance_rate": "Resistance Rate (%)",
+                    "country": "Country",
+                },
+                hover_data=["total_tested"],
+            )
+            fig_geo.update_layout(height=450, xaxis_tickangle=-45)
+            st.plotly_chart(fig_geo, use_container_width=True)
+
+            st.dataframe(
+                geo_filtered[["country","total_tested","total_resistant","resistance_rate"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — AMR GENE BURDEN
@@ -321,7 +334,6 @@ with tab4:
 with tab5:
     st.subheader("AMR Gene Burden Across Pathogens")
 
-    clean_df = pd.read_csv(f"{DATA_DIR}/eskape_clean.csv")
     clean_filtered = clean_df[
         (clean_df["pathogen"].isin(selected_pathogens)) &
         (clean_df["number_amr_genes"].notna())
@@ -340,19 +352,12 @@ with tab5:
         },
         points=False,
     )
-    fig_box.update_layout(
-        height=450,
-        showlegend=False,
-        xaxis_tickangle=-20,
-    )
+    fig_box.update_layout(height=450, showlegend=False, xaxis_tickangle=-20)
     st.plotly_chart(fig_box, use_container_width=True)
 
     st.divider()
+    st.subheader("Most Common AMR Genes per Pathogen")
 
-    # Top AMR genes across all pathogens
-    st.subheader("Most Common AMR Genes")
-
-    ast_genes = pd.read_csv(f"{DATA_DIR}/ast_long.csv")
     amr_gene_df = clean_df[
         clean_df["pathogen"].isin(selected_pathogens) &
         clean_df["AMR_genotypes"].notna()
@@ -364,7 +369,10 @@ with tab5:
         for g in genes:
             g = g.strip()
             if g and g != "nan":
-                gene_records.append({"pathogen": row["pathogen"], "gene": g})
+                gene_records.append({
+                    "pathogen": row["pathogen"],
+                    "gene": g,
+                })
 
     if gene_records:
         gene_df = pd.DataFrame(gene_records)
@@ -374,7 +382,11 @@ with tab5:
             .reset_index(name="count")
             .sort_values("count", ascending=False)
         )
-        top_genes_display = top_genes.groupby("pathogen").head(5)
+        top_genes_display = (
+            top_genes.groupby("pathogen")
+            .head(5)
+            .reset_index(drop=True)
+        )
 
         fig_genes = px.bar(
             top_genes_display,
