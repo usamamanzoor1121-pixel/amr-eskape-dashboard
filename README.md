@@ -4,12 +4,14 @@ Interactive antimicrobial resistance surveillance dashboard for ESKAPE pathogens
 
 ## Live Demo
 
-http://3.81.108.239:8501
+**http://3.81.108.239:8501**
+
+![Dashboard Screenshot](screenshots/dashboard.png)
 
 ## Overview
 
 - 504,096 isolates across 6 ESKAPE pathogens
-- 110 antibiotics with resistance phenotype data
+- 65 antibiotics with resistance phenotype data
 - 16 countries with geographic resistance patterns
 - Data source: NCBI Pathogen Detection (updated June 2026)
 
@@ -44,6 +46,8 @@ cd amr-eskape-dashboard
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+python scripts/fetch_amr_data.py
+python scripts/clean_amr_data.py
 streamlit run app/dashboard.py
 
 ## Project Structure
@@ -57,6 +61,8 @@ amr-eskape-dashboard/
 │   └── clean_amr_data.py  Data cleaning and processing
 ├── app/
 │   └── dashboard.py       Streamlit dashboard
+├── screenshots/
+│   └── dashboard.png
 ├── deploy.sh              EC2 deployment script
 └── requirements.txt
 
